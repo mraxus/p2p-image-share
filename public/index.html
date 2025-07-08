@@ -1,34 +1,15 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>P2P Image Share</title>
-    <style>
-        body { font-family: sans-serif; padding: 1rem; }
-        textarea { width: 100%; height: 60px; }
-        img { max-width: 100%; margin-top: 1rem; }
-    </style>
-</head>
-<body>
-<h1>P2P Image Share (WebRTC + WebSocket)</h1>
-
-<label>Peer ID to connect to:</label>
-<input type="text" id="remoteId">
-<button id="connect">Connect</button><br><br>
-
-<input type="file" id="fileInput">
-<button id="sendFile">Send Image</button><br>
-
-<h3>Your ID: <span id="myId">...</span></h3>
-<h3>Received Image:</h3>
-<img id="receivedImage" alt="No image received yet.">
-
 <script>
     const ws = new WebSocket(`ws://${location.host}`);
     const pc = new RTCPeerConnection();
     let dataChannel, remoteId;
 
     const $ = (id) => document.getElementById(id);
+    let receiveBuffer = [];
+    let receivedSize = 0;
+    let expectedSize = 0;
+    let fileName = "";
+
+    const CHUNK_SIZE = 16 * 1024;
 
     ws.onmessage = async ({ data }) => {
         const msg = JSON.parse(data);
@@ -64,15 +45,33 @@
 
     pc.ondatachannel = (e) => {
         const channel = e.channel;
+        channel.binaryType = 'arraybuffer';
+
         channel.onmessage = (event) => {
-            const blob = new Blob([event.data]);
-            $('receivedImage').src = URL.createObjectURL(blob);
+            if (typeof event.data === 'string') {
+                const header = JSON.parse(event.data);
+                fileName = header.name;
+                expectedSize = header.size;
+                receiveBuffer = [];
+                receivedSize = 0;
+                return;
+            }
+
+            receiveBuffer.push(event.data);
+            receivedSize += event.data.byteLength;
+
+            if (receivedSize === expectedSize) {
+                const blob = new Blob(receiveBuffer);
+                $('receivedImage').src = URL.createObjectURL(blob);
+                receiveBuffer = [];
+            }
         };
     };
 
     $('connect').onclick = async () => {
         remoteId = $('remoteId').value;
         dataChannel = pc.createDataChannel("file");
+        dataChannel.binaryType = 'arraybuffer';
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -89,10 +88,30 @@
             alert("Select a file and ensure connection is ready");
             return;
         }
+
+        // Send metadata first
+        const header = JSON.stringify({ name: file.name, size: file.size });
+        dataChannel.send(header);
+
         const reader = new FileReader();
-        reader.onload = () => dataChannel.send(reader.result);
-        reader.readAsArrayBuffer(file);
+        let offset = 0;
+
+        const readSlice = o => {
+            const slice = file.slice(o, o + CHUNK_SIZE);
+            reader.readAsArrayBuffer(slice);
+        };
+
+        reader.onload = e => {
+            dataChannel.send(e.target.result);
+            offset += e.target.result.byteLength;
+
+            if (offset < file.size) {
+                setTimeout(() => readSlice(offset), 0); // avoid blocking
+            } else {
+                console.log("File sent completely");
+            }
+        };
+
+        readSlice(0);
     };
 </script>
-</body>
-</html>
