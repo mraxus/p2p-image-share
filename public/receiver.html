@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Receiver - P2P Image Share</title>
+    <style>
+        body { font-family: sans-serif; padding: 1rem; }
+        img { max-width: 100%; margin-top: 1rem; }
+    </style>
+</head>
+<body>
+<h1>Receiver</h1>
+<p>Your ID: <span id="myId">...</span></p>
+<p>Share your ID with the sender so they can connect to you.</p>
+
+<h3>Received Image:</h3>
+<img id="receivedImage" alt="Waiting for file...">
+
+<script>
+    const ws = new WebSocket(`ws://${location.host}`);
+    const pc = new RTCPeerConnection();
+    let receiveBuffer = [];
+    let receivedSize = 0;
+    let expectedSize = 0;
+    let fileName = "";
+
+    const $ = id => document.getElementById(id);
+
+    ws.onmessage = async ({ data }) => {
+        const msg = JSON.parse(data);
+        if (msg.type === 'init') {
+            $('myId').textContent = msg.id;
+        }
+
+        if (msg.type === 'offer') {
+            await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            ws.send(JSON.stringify({ to: msg.from, type: 'answer', answer }));
+        }
+
+        if (msg.type === 'candidate') {
+            try {
+                await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            } catch (e) {
+                console.error('Error adding ICE candidate', e);
+            }
+        }
+    };
+
+    pc.onicecandidate = ({ candidate }) => {
+        if (candidate) {
+            ws.send(JSON.stringify({ to: senderId, type: 'candidate', candidate }));
+        }
+    };
+
+    pc.ondatachannel = e => {
+        const channel = e.channel;
+        channel.binaryType = 'arraybuffer';
+
+        channel.onmessage = (event) => {
+            if (typeof event.data === 'string') {
+                const header = JSON.parse(event.data);
+                fileName = header.name;
+                expectedSize = header.size;
+                receiveBuffer = [];
+                receivedSize = 0;
+                return;
+            }
+
+            receiveBuffer.push(event.data);
+            receivedSize += event.data.byteLength;
+
+            if (receivedSize === expectedSize) {
+                const blob = new Blob(receiveBuffer);
+                $('receivedImage').src = URL.createObjectURL(blob);
+                receiveBuffer = [];
+            }
+        };
+    };
+</script>
+</body>
+</html>
