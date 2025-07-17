@@ -10,15 +10,29 @@ const PORT = 3000;
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-const clients = new Map();
+const clients = new Map(); // id => ws
 
 app.use(express.static(path.join(__dirname, 'public')));
+
+function broadcastClientList() {
+    const clientList = [...clients.keys()];
+    const message = JSON.stringify({ type: 'clients', clients: clientList });
+    for (const ws of clients.values()) {
+        if (ws.readyState === ws.OPEN) {
+            ws.send(message);
+        }
+    }
+}
 
 wss.on('connection', (ws) => {
     const id = uuidv4();
     clients.set(id, ws);
 
+    // Send the new client its own ID
     ws.send(JSON.stringify({ type: 'init', id }));
+
+    // Broadcast updated list of clients to everyone
+    broadcastClientList();
 
     ws.on('message', (message) => {
         let msg;
@@ -37,10 +51,10 @@ wss.on('connection', (ws) => {
 
     ws.on('close', () => {
         clients.delete(id);
+        broadcastClientList();
     });
 });
 
-// ✅ Bind to all interfaces
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on http://0.0.0.0:${PORT}`);
 });

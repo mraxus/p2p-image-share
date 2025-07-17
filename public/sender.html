@@ -1,11 +1,19 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
+    <meta charset="UTF-8" />
     <title>Sender - P2P Image Share</title>
     <style>
         body { font-family: sans-serif; padding: 1rem; }
         input, button { margin: 0.5rem 0; }
+        #clientsList { max-height: 150px; overflow-y: auto; border: 1px solid #ccc; padding: 0.5rem; }
+        #clientsList div {
+            padding: 0.3rem;
+            cursor: pointer;
+        }
+        #clientsList div:hover {
+            background-color: #eef;
+        }
         #log {
             margin-top: 1rem;
             border-top: 1px solid #ccc;
@@ -25,11 +33,15 @@
 <h1>Sender</h1>
 <p>Your ID: <span id="myId">...</span></p>
 
-<input type="text" id="remoteId" placeholder="Receiver ID">
-<button id="connect">Connect</button><br>
+<div>
+    <label><strong>Connected Receivers:</strong></label>
+    <div id="clientsList">(No receivers connected)</div>
+</div>
 
-<input type="file" id="fileInput">
-<button id="sendFile">Send Image</button><br>
+<button id="connect" disabled>Connect to Selected Receiver</button><br>
+
+<input type="file" id="fileInput" />
+<button id="sendFile" disabled>Send Image</button><br>
 
 <div id="log"></div>
 
@@ -37,10 +49,13 @@
     const ws = new WebSocket(`ws://${location.host}`);
     const pc = new RTCPeerConnection();
     const CHUNK_SIZE = 16 * 1024;
-    let dataChannel, remoteId;
+    let dataChannel, remoteId = null;
     let remoteDescriptionSet = false;
 
     const $ = id => document.getElementById(id);
+    const clientsListDiv = $('clientsList');
+    const connectBtn = $('connect');
+    const sendFileBtn = $('sendFile');
 
     function log(msg, type = "info") {
         const el = document.createElement("div");
@@ -59,15 +74,22 @@
     ws.onmessage = async ({ data }) => {
         try {
             const msg = JSON.parse(data);
+
             if (msg.type === 'init') {
                 $('myId').textContent = msg.id;
                 log("Received init with ID: " + msg.id, "event");
+            }
+
+            if (msg.type === 'clients') {
+                updateClientsList(msg.clients);
+                return;
             }
 
             if (msg.type === 'answer') {
                 log("Received answer from receiver", "event");
                 await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
                 remoteDescriptionSet = true;
+                sendFileBtn.disabled = false;
             }
 
             if (msg.type === 'candidate') {
@@ -75,12 +97,10 @@
                     log("Ignoring invalid ICE candidate", "info");
                     return;
                 }
-
                 if (!remoteDescriptionSet) {
                     log("Skipping ICE candidate (remoteDescription not set yet)", "error");
                     return;
                 }
-
                 try {
                     await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
                     log("Added ICE candidate", "event");
@@ -95,6 +115,42 @@
 
     ws.onerror = err => log("WebSocket error: " + err.message, "error");
 
+    function updateClientsList(clients) {
+        // Remove own ID from list and only show others
+        const myId = $('myId').textContent;
+        const others = clients.filter(id => id !== myId);
+
+        clientsListDiv.innerHTML = "";
+
+        if (others.length === 0) {
+            clientsListDiv.textContent = "(No receivers connected)";
+            connectBtn.disabled = true;
+            return;
+        }
+
+        others.forEach(id => {
+            const div = document.createElement('div');
+            div.textContent = id;
+            div.onclick = () => selectClient(id, div);
+            clientsListDiv.appendChild(div);
+        });
+
+        connectBtn.disabled = true;
+        remoteId = null;
+        sendFileBtn.disabled = true;
+    }
+
+    function selectClient(id, div) {
+        remoteId = id;
+        // Highlight selected
+        Array.from(clientsListDiv.children).forEach(child => {
+            child.style.backgroundColor = "";
+        });
+        div.style.backgroundColor = "#aaf";
+        connectBtn.disabled = false;
+        sendFileBtn.disabled = true;
+    }
+
     pc.onicecandidate = ({ candidate }) => {
         if (candidate && remoteId) {
             ws.send(JSON.stringify({ to: remoteId, type: 'candidate', candidate }));
@@ -102,14 +158,19 @@
         }
     };
 
-    $('connect').onclick = async () => {
-        remoteId = $('remoteId').value;
-        if (!remoteId) return log("Receiver ID is required", "error");
+    connectBtn.onclick = async () => {
+        if (!remoteId) {
+            log("No receiver selected", "error");
+            return;
+        }
 
         dataChannel = pc.createDataChannel("file");
         dataChannel.binaryType = 'arraybuffer';
 
-        dataChannel.onopen = () => log("DataChannel opened", "event");
+        dataChannel.onopen = () => {
+            log("DataChannel opened", "event");
+            sendFileBtn.disabled = false;
+        };
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -117,7 +178,7 @@
         ws.send(JSON.stringify({ to: remoteId, type: 'offer', offer }));
     };
 
-    $('sendFile').onclick = () => {
+    sendFileBtn.onclick = () => {
         const file = $('fileInput').files[0];
         if (!file || !dataChannel || dataChannel.readyState !== "open") {
             return log("No file selected or DataChannel not open", "error");
