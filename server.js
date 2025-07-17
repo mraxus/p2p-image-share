@@ -10,15 +10,22 @@ const PORT = 3000;
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-const clients = new Map(); // id => ws
+const clients = new Map(); // id => { ws, role, alias }
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-function broadcastClientList() {
-    const clientList = [...clients.keys()];
-    const message = JSON.stringify({ type: 'clients', clients: clientList });
-    for (const ws of clients.values()) {
-        if (ws.readyState === ws.OPEN) {
+function broadcastReceiversList() {
+    const receivers = [...clients.entries()]
+        .filter(([, client]) => client.role === 'receiver')
+        .map(([id, client]) => ({
+            id,
+            alias: client.alias || id
+        }));
+
+    const message = JSON.stringify({ type: 'receivers', receivers });
+
+    for (const { ws, role } of clients.values()) {
+        if (role === 'sender' && ws.readyState === ws.OPEN) {
             ws.send(message);
         }
     }
@@ -26,13 +33,10 @@ function broadcastClientList() {
 
 wss.on('connection', (ws) => {
     const id = uuidv4();
-    clients.set(id, ws);
+    const clientData = { ws, role: null, alias: null };
+    clients.set(id, clientData);
 
-    // Send the new client its own ID
     ws.send(JSON.stringify({ type: 'init', id }));
-
-    // Broadcast updated list of clients to everyone
-    broadcastClientList();
 
     ws.on('message', (message) => {
         let msg;
@@ -42,16 +46,30 @@ wss.on('connection', (ws) => {
             return;
         }
 
+        // Handle role or alias setting
+        if (msg.type === 'setRole') {
+            clientData.role = msg.role;
+            broadcastReceiversList();
+            return;
+        }
+
+        if (msg.type === 'setAlias') {
+            clientData.alias = msg.alias;
+            broadcastReceiversList();
+            return;
+        }
+
+        // Forward signaling messages
         const recipient = clients.get(msg.to);
-        if (recipient && recipient.readyState === ws.OPEN) {
+        if (recipient && recipient.ws.readyState === ws.OPEN) {
             msg.from = id;
-            recipient.send(JSON.stringify(msg));
+            recipient.ws.send(JSON.stringify(msg));
         }
     });
 
     ws.on('close', () => {
         clients.delete(id);
-        broadcastClientList();
+        broadcastReceiversList();
     });
 });
 

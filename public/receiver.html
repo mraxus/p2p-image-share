@@ -24,7 +24,7 @@
 <body>
 <h1>Receiver</h1>
 <p>Your ID: <span id="myId">...</span></p>
-<p>Share your ID with the sender so they can connect to you.</p>
+<label>Your Alias: <input type="text" id="aliasInput" placeholder="Enter your name..."></label>
 
 <h3>Received Image:</h3>
 <img id="receivedImage" alt="Waiting for file...">
@@ -50,12 +50,19 @@
         $('log').scrollTop = $('log').scrollHeight;
     }
 
-    // Global error logging
     window.addEventListener("error", (event) => {
         log("Global error: " + event.message, "error");
     });
 
-    ws.onopen = () => log("WebSocket connected", "event");
+    ws.onopen = () => {
+        log("WebSocket connected", "event");
+        ws.send(JSON.stringify({ type: 'setRole', role: 'receiver' }));
+    };
+
+    $('aliasInput').addEventListener('input', () => {
+        const alias = $('aliasInput').value;
+        ws.send(JSON.stringify({ type: 'setAlias', alias }));
+    });
 
     ws.onmessage = async ({ data }) => {
         try {

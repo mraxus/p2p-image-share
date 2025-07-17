@@ -69,7 +69,10 @@
         log("Global error: " + event.message, "error");
     });
 
-    ws.onopen = () => log("WebSocket connected", "event");
+    ws.onopen = () => {
+        log("WebSocket connected", "event");
+        ws.send(JSON.stringify({ type: 'setRole', role: 'sender' }));
+    };
 
     ws.onmessage = async ({ data }) => {
         try {
@@ -80,8 +83,8 @@
                 log("Received init with ID: " + msg.id, "event");
             }
 
-            if (msg.type === 'clients') {
-                updateClientsList(msg.clients);
+            if (msg.type === 'receivers') {
+                updateClientsList(msg.receivers);
                 return;
             }
 
@@ -115,22 +118,18 @@
 
     ws.onerror = err => log("WebSocket error: " + err.message, "error");
 
-    function updateClientsList(clients) {
-        // Remove own ID from list and only show others
-        const myId = $('myId').textContent;
-        const others = clients.filter(id => id !== myId);
-
+    function updateClientsList(receivers) {
         clientsListDiv.innerHTML = "";
 
-        if (others.length === 0) {
+        if (!receivers.length) {
             clientsListDiv.textContent = "(No receivers connected)";
             connectBtn.disabled = true;
             return;
         }
 
-        others.forEach(id => {
+        receivers.forEach(({ id, alias }) => {
             const div = document.createElement('div');
-            div.textContent = id;
+            div.textContent = alias;
             div.onclick = () => selectClient(id, div);
             clientsListDiv.appendChild(div);
         });
@@ -142,7 +141,6 @@
 
     function selectClient(id, div) {
         remoteId = id;
-        // Highlight selected
         Array.from(clientsListDiv.children).forEach(child => {
             child.style.backgroundColor = "";
         });
