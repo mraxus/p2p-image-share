@@ -1,28 +1,46 @@
-const express = require('express');
 const http = require('http');
-const WebSocket = require('ws');
+const express = require('express');
+const { WebSocketServer } = require('ws');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
 const app = express();
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const PORT = 3000;
 
-const peers = new Map(); // Map client ID -> WebSocket
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+const clients = new Map();
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 wss.on('connection', (ws) => {
-    let id = Math.random().toString(36).substr(2, 9);
-    peers.set(id, ws);
+    const id = uuidv4();
+    clients.set(id, ws);
+
     ws.send(JSON.stringify({ type: 'init', id }));
 
-    ws.on('message', (msg) => {
-        const data = JSON.parse(msg);
-        const target = peers.get(data.to);
-        if (target) target.send(JSON.stringify({ ...data, from: id }));
+    ws.on('message', (message) => {
+        let msg;
+        try {
+            msg = JSON.parse(message);
+        } catch (err) {
+            return;
+        }
+
+        const recipient = clients.get(msg.to);
+        if (recipient && recipient.readyState === ws.OPEN) {
+            msg.from = id;
+            recipient.send(JSON.stringify(msg));
+        }
     });
 
     ws.on('close', () => {
-        peers.delete(id);
+        clients.delete(id);
     });
 });
 
-app.use(express.static('public'));
-server.listen(3000, () => console.log('Server running on http://localhost:3000'));
+// ✅ Bind to all interfaces
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server listening on http://0.0.0.0:${PORT}`);
+});
