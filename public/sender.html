@@ -6,7 +6,16 @@
     <style>
         body { font-family: sans-serif; padding: 1rem; }
         input, button { margin: 0.5rem 0; }
-        #log { margin-top: 1rem; border-top: 1px solid #ccc; padding-top: 1rem; font-family: monospace; font-size: 0.9em; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+        #log {
+            margin-top: 1rem;
+            border-top: 1px solid #ccc;
+            padding-top: 1rem;
+            font-family: monospace;
+            font-size: 0.9em;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
         .info { color: #333; }
         .error { color: red; }
         .event { color: green; }
@@ -29,6 +38,7 @@
     const pc = new RTCPeerConnection();
     const CHUNK_SIZE = 16 * 1024;
     let dataChannel, remoteId;
+    let remoteDescriptionSet = false;
 
     const $ = id => document.getElementById(id);
 
@@ -40,27 +50,46 @@
         $('log').scrollTop = $('log').scrollHeight;
     }
 
+    window.addEventListener("error", (event) => {
+        log("Global error: " + event.message, "error");
+    });
+
     ws.onopen = () => log("WebSocket connected", "event");
 
     ws.onmessage = async ({ data }) => {
-        const msg = JSON.parse(data);
-        if (msg.type === 'init') {
-            $('myId').textContent = msg.id;
-            log("Received init with ID: " + msg.id, "event");
-        }
-
-        if (msg.type === 'answer') {
-            log("Received answer from receiver", "event");
-            await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
-        }
-
-        if (msg.type === 'candidate') {
-            try {
-                await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-                log("Added ICE candidate", "event");
-            } catch (e) {
-                log("Error adding ICE candidate: " + e, "error");
+        try {
+            const msg = JSON.parse(data);
+            if (msg.type === 'init') {
+                $('myId').textContent = msg.id;
+                log("Received init with ID: " + msg.id, "event");
             }
+
+            if (msg.type === 'answer') {
+                log("Received answer from receiver", "event");
+                await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
+                remoteDescriptionSet = true;
+            }
+
+            if (msg.type === 'candidate') {
+                if (!msg.candidate || !msg.candidate.candidate) {
+                    log("Ignoring invalid ICE candidate", "info");
+                    return;
+                }
+
+                if (!remoteDescriptionSet) {
+                    log("Skipping ICE candidate (remoteDescription not set yet)", "error");
+                    return;
+                }
+
+                try {
+                    await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+                    log("Added ICE candidate", "event");
+                } catch (err) {
+                    log("Error adding ICE candidate: " + err.message, "error");
+                }
+            }
+        } catch (err) {
+            log("Error in onmessage: " + err.message, "error");
         }
     };
 

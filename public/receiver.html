@@ -40,6 +40,7 @@
     let expectedSize = 0;
     let fileName = "";
     let senderId = null;
+    let remoteDescriptionSet = false;
 
     function log(msg, type = "info") {
         const el = document.createElement("div");
@@ -68,6 +69,7 @@
                 log("Received offer from sender", "event");
                 senderId = msg.from;
                 await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
+                remoteDescriptionSet = true;
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
                 ws.send(JSON.stringify({ to: senderId, type: 'answer', answer }));
@@ -75,11 +77,21 @@
             }
 
             if (msg.type === 'candidate') {
+                if (!msg.candidate || !msg.candidate.candidate) {
+                    log("Ignoring invalid ICE candidate", "info");
+                    return;
+                }
+
+                if (!remoteDescriptionSet) {
+                    log("Skipping ICE candidate (remoteDescription not set yet)", "error");
+                    return;
+                }
+
                 try {
                     await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
                     log("Added ICE candidate", "event");
                 } catch (e) {
-                    log("Error adding ICE candidate: " + e, "error");
+                    log("Error adding ICE candidate: " + e.message, "error");
                 }
             }
         } catch (err) {
