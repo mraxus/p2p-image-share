@@ -6,7 +6,16 @@
     <style>
         body { font-family: sans-serif; padding: 1rem; }
         img { max-width: 100%; margin-top: 1rem; }
-        #log { margin-top: 1rem; border-top: 1px solid #ccc; padding-top: 1rem; font-family: monospace; font-size: 0.9em; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+        #log {
+            margin-top: 1rem;
+            border-top: 1px solid #ccc;
+            padding-top: 1rem;
+            font-family: monospace;
+            font-size: 0.9em;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
         .info { color: #333; }
         .error { color: red; }
         .event { color: green; }
@@ -30,6 +39,7 @@
     let receivedSize = 0;
     let expectedSize = 0;
     let fileName = "";
+    let senderId = null;
 
     function log(msg, type = "info") {
         const el = document.createElement("div");
@@ -39,31 +49,41 @@
         $('log').scrollTop = $('log').scrollHeight;
     }
 
+    // Global error logging
+    window.addEventListener("error", (event) => {
+        log("Global error: " + event.message, "error");
+    });
+
     ws.onopen = () => log("WebSocket connected", "event");
 
     ws.onmessage = async ({ data }) => {
-        const msg = JSON.parse(data);
-        if (msg.type === 'init') {
-            $('myId').textContent = msg.id;
-            log("Received init with ID: " + msg.id, "event");
-        }
-
-        if (msg.type === 'offer') {
-            log("Received offer from sender", "event");
-            await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            ws.send(JSON.stringify({ to: msg.from, type: 'answer', answer }));
-            log("Sent answer back to sender", "info");
-        }
-
-        if (msg.type === 'candidate') {
-            try {
-                await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-                log("Added ICE candidate", "event");
-            } catch (e) {
-                log("Error adding ICE candidate: " + e, "error");
+        try {
+            const msg = JSON.parse(data);
+            if (msg.type === 'init') {
+                $('myId').textContent = msg.id;
+                log("Received init with ID: " + msg.id, "event");
             }
+
+            if (msg.type === 'offer') {
+                log("Received offer from sender", "event");
+                senderId = msg.from;
+                await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                ws.send(JSON.stringify({ to: senderId, type: 'answer', answer }));
+                log("Sent answer back to sender", "info");
+            }
+
+            if (msg.type === 'candidate') {
+                try {
+                    await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+                    log("Added ICE candidate", "event");
+                } catch (e) {
+                    log("Error adding ICE candidate: " + e, "error");
+                }
+            }
+        } catch (err) {
+            log("Error in onmessage: " + err.message, "error");
         }
     };
 
@@ -71,6 +91,10 @@
 
     pc.onicecandidate = ({ candidate }) => {
         if (candidate) {
+            if (!senderId) {
+                log("ICE candidate received before senderId known", "error");
+                return;
+            }
             ws.send(JSON.stringify({ to: senderId, type: 'candidate', candidate }));
             log("Sent ICE candidate", "info");
         }
